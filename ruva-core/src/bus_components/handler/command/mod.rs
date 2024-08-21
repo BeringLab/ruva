@@ -18,7 +18,6 @@ use crate::{
 	message::TCommand,
 	prelude::{ApplicationError, ApplicationResponse, BaseError, TCommandService, TSetCurrentEvents, TUnitOfWork},
 };
-pub use uow::*;
 
 pub struct CommandHandler<T>(pub T);
 
@@ -28,17 +27,23 @@ impl<T> CommandHandler<T> {
 	}
 }
 
-pub trait AsyncFunc<C, R, ApplicationResult>: Fn(C, R) -> Self::Fut + Send + Sync {
-	type Fut: std::future::Future<Output = ApplicationResult> + Send;
+pub trait AsyncFunc<Message, Context, ApplicationResult> {
+	type Future: std::future::Future<Output = ApplicationResult> + Send;
+	fn call(self, message: Message, context: Context) -> Self::Future;
 }
 
-impl<F, C, Fut, Respository, ApplicationResult> AsyncFunc<C, Respository, ApplicationResult> for F
+impl<F, Command, Fut, Context, ApplicationResult> AsyncFunc<Command, Context, ApplicationResult> for F
 where
-	C: crate::prelude::TCommand,
-	F: Fn(C, Respository) -> Fut + Send + Sync,
+	Command: crate::prelude::TCommand,
+	Context: std::marker::Send + Sync + 'static,
+	F: Fn(Command, Context) -> Fut + Send + Clone + 'static,
 	Fut: std::future::Future<Output = ApplicationResult> + Send,
 {
-	type Fut = Fut;
+	type Future = std::pin::Pin<Box<dyn std::future::Future<Output = ApplicationResult> + Send>>;
+
+	fn call(self, message: Command, context: Context) -> Self::Future {
+		Box::pin(async move { self(message, context).await })
+	}
 }
 
 pub trait TGetHandler<R, ApplicationResult>: Sized {

@@ -1,8 +1,10 @@
+#[macro_use]
+mod macros;
+
 mod adapters;
 mod aggregate;
 mod backtrace;
 mod bus_components;
-mod macros;
 mod message;
 mod outbox;
 mod responses;

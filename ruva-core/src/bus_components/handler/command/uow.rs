@@ -1,36 +1,21 @@
 use super::*;
 
-pub trait TUnitOfWorkCommandHandler: Send + Sync {
-	type Dependency;
-	fn destruct(self) -> Self::Dependency;
-}
+// all_the_tuples!(impl_uow_handler);
 
-impl<D1, D2> TUnitOfWorkCommandHandler for CommandHandler<(D1, D2)>
-where
-	D1: crate::prelude::TCommand,
-	D2: crate::prelude::TSetCurrentEvents + crate::prelude::TUnitOfWork,
-{
-	type Dependency = (D1, D2);
-
-	fn destruct(self) -> Self::Dependency {
-		self.0
-	}
-}
-
-impl<T, R, E, D1, D2> TCommandService<R, E> for T
+// tuple expression!
+impl<R, E, D1, D2> TCommandService<R, E> for CommandHandler<(D1, D2)>
 where
 	R: ApplicationResponse,
 	E: ApplicationError + std::convert::From<crate::responses::BaseError> + std::convert::Into<BaseError> + Clone,
 	D1: TCommand + for<'a> TGetHandler<&'a mut D2, Result<R, E>>,
 	D2: TSetCurrentEvents + TUnitOfWork,
-	T: TUnitOfWorkCommandHandler<Dependency = (D1, D2)>,
 {
 	async fn execute(self) -> Result<R, E> {
 		let (cmd, mut dep) = self.destruct();
 
 		dep.begin().await?;
 
-		let result = (D1::get_handler())(cmd, &mut dep).await;
+		let result = D1::get_handler().call(cmd, &mut dep).await;
 		match result {
 			Ok(val) => {
 				dep.commit().await?;
@@ -69,7 +54,6 @@ macro_rules! __register_uow_services_internal {
             $command:ty => $handler:expr
         ),*
     ) => {
-        use ruva::TUnitOfWorkCommandHandler;
         type ApplicationResult = std::result::Result<$response,$error>;
 
         $(
