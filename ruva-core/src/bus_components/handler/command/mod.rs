@@ -121,7 +121,7 @@ mod tests {
 			T: for<'a> AsyncFunc<Command, (&'a mut C, S), Result<(), ()>>,
 		{
 		}
-		test(test_with_3_deps::<(crate::prelude::Context, String, i32)>);
-		main_test(test_with_3_deps::<(crate::prelude::Context, String, i32)>);
+		test(test_with_3_deps::<crate::prelude::Context>);
+		main_test(test_with_3_deps::<crate::prelude::Context>);
 	}
 }
