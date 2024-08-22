@@ -15,7 +15,7 @@ where
 
 		dep.begin().await?;
 
-		let result = D1::get_handler().call(cmd, &mut dep).await;
+		let result = D1::get_handler().call(cmd, (&mut dep,)).await;
 		match result {
 			Ok(val) => {
 				dep.commit().await?;
@@ -44,7 +44,7 @@ where
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __register_uow_services_internal {
-    (
+	(
         $messagebus:ty,
         $response:ty,
         $error:ty,
@@ -54,26 +54,26 @@ macro_rules! __register_uow_services_internal {
             $command:ty => $handler:expr
         ),*
     ) => {
-        type ApplicationResult = std::result::Result<$response,$error>;
+		type ApplicationResult = std::result::Result<$response, $error>;
 
-        $(
-            impl<'a> ruva::TGetHandler<&'a mut ::ruva::Context, ApplicationResult> for $command {
-                fn get_handler() -> impl ::ruva::AsyncFunc<$command, &'a mut ::ruva::Context, ApplicationResult > {
-                    $handler
-                }
-            }
+		$(
+		    impl<'a> ruva::TGetHandler<&'a mut ::ruva::Context, ApplicationResult> for $command {
+		        fn get_handler() -> impl ::ruva::AsyncFunc<$command, (&'a mut ::ruva::Context,), ApplicationResult > {
+		            $handler
+		        }
+		    }
 
-            impl ::ruva::TMessageBus<$response,$error,$command> for $messagebus{
-                fn command_handler(
-                    &self,
-                    context_manager: ruva::AtomicContextManager,
-                    cmd: $command,
-                ) -> impl ::ruva::TCommandService<$response, $error> {
-                    $h(::ruva::CommandHandler((cmd, ::ruva::Context::new(context_manager))))
-                }
-            }
-        )*
-    };
+		    impl ::ruva::TMessageBus<$response,$error,$command> for $messagebus{
+		        fn command_handler(
+		            &self,
+		            context_manager: ruva::AtomicContextManager,
+		            cmd: $command,
+		        ) -> impl ::ruva::TCommandService<$response, $error> {
+		            $h(::ruva::CommandHandler((cmd, ::ruva::Context::new(context_manager))))
+		        }
+		    }
+		)*
+	};
 }
 
 #[macro_export]

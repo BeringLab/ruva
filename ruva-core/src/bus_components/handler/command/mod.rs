@@ -14,6 +14,7 @@
 //! ```
 
 pub mod uow;
+
 use crate::{
 	message::TCommand,
 	prelude::{ApplicationError, ApplicationResponse, BaseError, TCommandService, TSetCurrentEvents, TUnitOfWork},
@@ -27,25 +28,74 @@ impl<T> CommandHandler<T> {
 	}
 }
 
-pub trait AsyncFunc<Message, Context, ApplicationResult> {
-	type Future: std::future::Future<Output = ApplicationResult> + Send;
-	fn call(self, message: Message, context: Context) -> Self::Future;
+pub trait AsyncFunc<Message, T, ApplicationResult> {
+	fn call(self, message: Message, t: T) -> impl std::future::Future<Output = ApplicationResult> + Send;
 }
-
-impl<F, Command, Fut, Context, ApplicationResult> AsyncFunc<Command, Context, ApplicationResult> for F
-where
-	Command: crate::prelude::TCommand,
-	Context: std::marker::Send + Sync + 'static,
-	F: Fn(Command, Context) -> Fut + Send + Clone + 'static,
-	Fut: std::future::Future<Output = ApplicationResult> + Send,
-{
-	type Future = std::pin::Pin<Box<dyn std::future::Future<Output = ApplicationResult> + Send>>;
-
-	fn call(self, message: Command, context: Context) -> Self::Future {
-		Box::pin(async move { self(message, context).await })
-	}
-}
-
 pub trait TGetHandler<R, ApplicationResult>: Sized {
-	fn get_handler() -> impl AsyncFunc<Self, R, ApplicationResult>;
+	fn get_handler() -> impl AsyncFunc<Self, (R,), ApplicationResult>;
+}
+
+// impl<F, Fut, Command, Context, ApplicationResult> AsyncFunc<Command, Context, ApplicationResult> for F
+// where
+// 	F: Fn(Command, Context) -> Fut + Send + Clone,
+// 	Fut: std::future::Future<Output = ApplicationResult> + Send,
+// 	Command: crate::prelude::TCommand,
+// 	Context: std::marker::Send + Sync,
+// {
+// 	async fn call(self, message: Command, t: Context) -> ApplicationResult {
+// 		self(message, t).await
+// 	}
+// }
+
+macro_rules! impl_handler {
+	(
+        [$($ty:ident),*]
+    ) => {
+		impl<F, Command, Fut,  ApplicationResult,$($ty,)*> AsyncFunc<Command, ($($ty,)*), ApplicationResult> for F
+		where
+			Command: crate::prelude::TCommand,
+
+			F: Fn(Command, $($ty,)*) -> Fut + Send + Clone,
+			Fut: std::future::Future<Output = ApplicationResult> + Send,
+			$( $ty: Send, )*
+		{
+			#[allow(non_snake_case, unused_mut)]
+			async fn call(self, message: Command, t: ($($ty,)*)) -> ApplicationResult {
+				// destructuring tuple and count the number of elements
+				// if tuple length is 0, call the function with only message and context
+
+				let ($($ty,)*) = t;
+				self(message, $($ty,)*).await
+			}
+		}
+	};
+}
+
+all_the_tuples!(impl_handler);
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::prelude::TCommand;
+
+	#[derive(Debug)]
+	struct Command;
+	impl TCommand for Command {}
+
+	async fn create_user_account<R>(_cmd: Command, _repo: &mut R) -> Result<(), ()>
+	where
+		R: std::marker::Send,
+	{
+		Ok(())
+	}
+
+	#[test]
+	fn test_handler_type() {
+		fn test<T, C>(_: T)
+		where
+			T: for<'a> AsyncFunc<Command, (&'a mut C,), Result<(), ()>>,
+		{
+		}
+		test(create_user_account::<crate::prelude::Context>);
+	}
 }

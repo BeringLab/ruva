@@ -1,0 +1,1 @@
+the trait `for<'a> TGetHandler<&'a mut ruva::Context, ServiceResponse, ServiceError>>` is not implemented for `CreateUserAccount`, which is required by `LoggingAspect<ruva::CommandHandler<(domain::auth::account::commands::CreateUserAccount, ruva::Context)>>: TCommandService<ServiceResponse, ServiceEr
