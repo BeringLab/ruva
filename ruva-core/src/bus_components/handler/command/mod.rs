@@ -82,20 +82,46 @@ mod tests {
 	struct Command;
 	impl TCommand for Command {}
 
-	async fn create_user_account<R>(_cmd: Command, _repo: &mut R) -> Result<(), ()>
+	fn main_test<T, U>(_: T)
 	where
-		R: std::marker::Send,
+		T: for<'a> AsyncFunc<Command, U, Result<(), ()>>,
 	{
-		Ok(())
 	}
 
 	#[test]
 	fn test_handler_type() {
+		async fn test_fn_with_2_deps<R>(_cmd: Command, _repo: &mut R) -> Result<(), ()>
+		where
+			R: std::marker::Send,
+		{
+			Ok(())
+		}
+
 		fn test<T, C>(_: T)
 		where
 			T: for<'a> AsyncFunc<Command, (&'a mut C,), Result<(), ()>>,
 		{
 		}
-		test(create_user_account::<crate::prelude::Context>);
+		test(test_fn_with_2_deps::<crate::prelude::Context>);
+		main_test(test_fn_with_2_deps::<crate::prelude::Context>);
+	}
+
+	#[test]
+	fn test_handler_double_type() {
+		struct SomeOtherDependency;
+		async fn test_with_3_deps<R>(_cmd: Command, _repo: &mut R, _something_else: SomeOtherDependency) -> Result<(), ()>
+		where
+			R: std::marker::Send,
+		{
+			Ok(())
+		}
+
+		fn test<T, C, S>(_: T)
+		where
+			T: for<'a> AsyncFunc<Command, (&'a mut C, S), Result<(), ()>>,
+		{
+		}
+		test(test_with_3_deps::<(crate::prelude::Context, String, i32)>);
+		main_test(test_with_3_deps::<(crate::prelude::Context, String, i32)>);
 	}
 }
