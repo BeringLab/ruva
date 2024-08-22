@@ -32,20 +32,8 @@ pub trait AsyncFunc<Message, T, ApplicationResult> {
 	fn call(self, message: Message, t: T) -> impl std::future::Future<Output = ApplicationResult> + Send;
 }
 pub trait TGetHandler<R, ApplicationResult>: Sized {
-	fn get_handler() -> impl AsyncFunc<Self, (R,), ApplicationResult>;
+	fn get_handler() -> impl AsyncFunc<Self, R, ApplicationResult>;
 }
-
-// impl<F, Fut, Command, Context, ApplicationResult> AsyncFunc<Command, Context, ApplicationResult> for F
-// where
-// 	F: Fn(Command, Context) -> Fut + Send + Clone,
-// 	Fut: std::future::Future<Output = ApplicationResult> + Send,
-// 	Command: crate::prelude::TCommand,
-// 	Context: std::marker::Send + Sync,
-// {
-// 	async fn call(self, message: Command, t: Context) -> ApplicationResult {
-// 		self(message, t).await
-// 	}
-// }
 
 macro_rules! impl_handler {
 	(
@@ -96,13 +84,6 @@ mod tests {
 		{
 			Ok(())
 		}
-
-		fn test<T, C>(_: T)
-		where
-			T: for<'a> AsyncFunc<Command, (&'a mut C,), Result<(), ()>>,
-		{
-		}
-		test(test_fn_with_2_deps::<crate::prelude::Context>);
 		main_test(test_fn_with_2_deps::<crate::prelude::Context>);
 	}
 
@@ -115,13 +96,6 @@ mod tests {
 		{
 			Ok(())
 		}
-
-		fn test<T, C, S>(_: T)
-		where
-			T: for<'a> AsyncFunc<Command, (&'a mut C, S), Result<(), ()>>,
-		{
-		}
-		test(test_with_3_deps::<crate::prelude::Context>);
 		main_test(test_with_3_deps::<crate::prelude::Context>);
 	}
 }
