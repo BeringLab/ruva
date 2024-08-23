@@ -45,7 +45,6 @@ macro_rules! impl_uow_command_handler {
 				}
 			}
 		}
-
 	};
 }
 
@@ -54,57 +53,65 @@ all_the_tuples!(impl_uow_command_handler);
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __register_uow_services_internal {
-	(
-        $messagebus:ty,
+    // Main internal handler with optional type tuple (for extensibility)
+    (
+
         $response:ty,
         $error:ty,
         $h:expr,
+		$command:ty => $handler:expr ; [$($t:ident),*]
 
-        $(
-            $command:ty => $handler:expr
-        ),*
     ) => {
-		type ApplicationResult = std::result::Result<$response, $error>;
+		impl<'a, > ruva::TGetHandler<(&'a mut ::ruva::Context, $($t),*), std::result::Result<$response, $error>> for $command {
+			fn get_handler() -> impl ::ruva::AsyncFunc<$command, (&'a mut ::ruva::Context, $($t),*), std::result::Result<$response, $error>> {
+				$handler
+			}
+		}
 
-		$(
-		    impl<'a> ruva::TGetHandler<(&'a mut ::ruva::Context,), ApplicationResult> for $command {
-		        fn get_handler() -> impl ::ruva::AsyncFunc<$command, (&'a mut ::ruva::Context,), ApplicationResult > {
-		            $handler
-		        }
-		    }
+		//TODO command handler accept multiple arguments?
+		impl ::ruva::TMessageBus<$response, $error, $command> for ::ruva::DefaultMessageBus
+		{
+			fn command_handler(
+				&self,
+				cmd: $command,
+				context_manager: ruva::AtomicContextManager,
+			) -> impl ::ruva::TCommandService<$response, $error> {
 
-		    impl ::ruva::TMessageBus<$response,$error,$command> for $messagebus{
-		        fn command_handler(
-		            &self,
-		            context_manager: ruva::AtomicContextManager,
-		            cmd: $command,
-		        ) -> impl ::ruva::TCommandService<$response, $error> {
-		            $h(::ruva::CommandHandler((cmd, ::ruva::Context::new(context_manager))))
-		        }
-		    }
-		)*
-	};
+				$h(::ruva::CommandHandler((
+					cmd,
+					::ruva::Context::new(context_manager),
+					$(
+						$t::reflect(),
+					)*
+					)
+				))
+			}
+		}
+
+    };
 }
 
 #[macro_export]
 macro_rules! register_uow_services {
+
     // Case with custom handler function
     (
-        $messagebus:ty,
         $response:ty,
         $error:ty,
         $h:expr,
-
         $(
             $command:ty => $handler:expr
         ),*
     ) => {
-       	ruva::__register_uow_services_internal!($messagebus, $response, $error, $h, $($command => $handler),*);
+		$(
+			::ruva::__register_uow_services_internal!($response, $error, $h, $command => $handler;[]);
+		)*
+
+
     };
 
-    // Default case
+    // Default case with custom bus
     (
-        $messagebus:ty,
         $response:ty,
         $error:ty,
 
@@ -112,6 +119,8 @@ macro_rules! register_uow_services {
             $command:ty => $handler:expr
         ),*
     ) => {
-        ruva::__register_uow_services_internal!($messagebus, $response, $error, ::std::convert::identity, $($command => $handler),*);
+		$(
+			::ruva::__register_uow_services_internal!($response, $error, ::std::convert::identity, $command => $handler;[]);
+		)*
     };
 }

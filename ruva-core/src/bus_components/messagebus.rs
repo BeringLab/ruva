@@ -123,7 +123,7 @@ where
 	E: ApplicationError + std::convert::From<crate::responses::BaseError>,
 	C: TCommand,
 {
-	fn command_handler(&self, context_manager: AtomicContextManager, cmd: C) -> impl TCommandService<R, E>;
+	fn command_handler(&self, cmd: C, context_manager: AtomicContextManager) -> impl TCommandService<R, E>;
 
 	/// This method is used to handle command and return result.
 	/// ## Example
@@ -138,7 +138,7 @@ where
 		}
 
 		let context_manager = ContextManager::new(conn);
-		let res = self.command_handler(context_manager.clone(), message).execute().await?;
+		let res = self.command_handler(message, context_manager.clone()).execute().await?;
 
 		// Trigger event handler
 		if !context_manager.read().await.event_queue.is_empty() {
@@ -162,7 +162,7 @@ where
 		}
 
 		let context_manager = ContextManager::new(conn);
-		let res = self.command_handler(context_manager.clone(), message).execute().await?;
+		let res = self.command_handler(message, context_manager.clone()).execute().await?;
 		let mut res = CommandResponseWithEventFutures { result: res, join_handler: None };
 
 		// Trigger event handler
