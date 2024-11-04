@@ -216,6 +216,7 @@ static ID_GENERATOR: std::sync::LazyLock<NumericalUniqueIdGenerator> = std::sync
 });
 
 #[derive(Clone, Hash, PartialEq, Debug, Eq, Ord, PartialOrd, Copy, Default)]
+#[cfg_attr(feature = "utoipa", derive(utoipa::ToSchema))]
 pub struct SnowFlake(pub i64);
 impl SnowFlake {
 	pub fn generate() -> Self {
