@@ -11,10 +11,11 @@ pub struct OutBox {
 	pub state: String,
 	pub processed: bool,
 	pub create_dt: DateTime<Utc>,
+	pub trace_id: String,
 }
 
 impl OutBox {
-	pub fn new(aggregate_id: String, aggregate_name: String, topic: String, state: String) -> Self {
+	pub fn new(aggregate_id: String, aggregate_name: String, topic: String, state: String, trace_id: String) -> Self {
 		Self {
 			id: *SnowFlake::generate(),
 			aggregate_id,
@@ -23,6 +24,7 @@ impl OutBox {
 			state,
 			processed: false,
 			create_dt: Default::default(),
+			trace_id,
 		}
 	}
 }

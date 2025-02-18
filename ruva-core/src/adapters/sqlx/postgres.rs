@@ -22,14 +22,15 @@ impl Context {
 			aggregate_id: String,
 			aggregate_name:String,
 			topic: String,
-			state: String
+			state: String,
+			trace_id: String
 		);
 		sqlx::query(
 			r#"
             INSERT INTO service_outbox
-                (id, aggregate_id, topic, state, aggregate_name)
+                (id, aggregate_id, topic, state, aggregate_name, trace_id)
             SELECT * FROM UNNEST
-                ($1::BIGINT[], $2::text[],  $3::text[], $4::text[], $5::text[])
+                ($1::BIGINT[], $2::text[],  $3::text[], $4::text[], $5::text[], $6::text[])
             "#,
 		)
 		.bind(&id)
@@ -37,6 +38,7 @@ impl Context {
 		.bind(&topic)
 		.bind(&state)
 		.bind(&aggregate_name)
+		.bind(&trace_id)
 		.execute(self.transaction())
 		.await
 		.map_err(|err| {
