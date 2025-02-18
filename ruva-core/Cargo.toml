@@ -33,6 +33,7 @@ sqlx = {version="0.8.1" ,features = ["runtime-tokio-rustls",
     "rust_decimal"],optional=true}
 backtrace = { version = "0.3.73", optional = true}
 utoipa = { version = "5", optional = true }
+opentelemetry = "0.28.0"
 
 [dev-dependencies]
 tokio = { version = "1.39.0", features = [ "macros","sync","rt","time","rt-multi-thread"] }

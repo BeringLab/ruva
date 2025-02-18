@@ -17,6 +17,7 @@
 //! will be handled in the separate process (or thread)
 use crate::prelude::OutBox;
 use downcast_rs::{impl_downcast, Downcast};
+use opentelemetry::trace::TraceContextExt as _;
 use std::fmt::Debug;
 
 pub trait TEvent: Sync + Send + Downcast {
@@ -37,7 +38,9 @@ pub trait TEvent: Sync + Send + Downcast {
 	}
 	fn outbox(&self) -> OutBox {
 		let metadata = self.metadata();
-		OutBox::new(metadata.aggregate_id, metadata.aggregate_name, metadata.topic, self.state())
+		let current_context = opentelemetry::Context::current();
+		let trace_id = current_context.span().span_context().trace_id().to_string();
+		OutBox::new(metadata.aggregate_id, metadata.aggregate_name, metadata.topic, self.state(), trace_id)
 	}
 
 	fn state(&self) -> String;
