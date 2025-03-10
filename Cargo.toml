@@ -14,10 +14,10 @@ ruva-core= {version="0.20.0", path="./ruva-core"}
 ruva-macro= {version="0.19.4", path="./ruva-macro"}
 static_assertions="1.1.0"
 regex = "1.11.1"
-utoipa = { version = "5.2.0", optional = true }
+utoipa = { version = "5.3.1", optional = true }
 
 [dev-dependencies]
-serde = {version="1.0.214",features=["derive"]}
+serde = {version="1.0.219",features=["derive"]}
 
 [features]
 backtrace = ["ruva-core/backtrace"]
