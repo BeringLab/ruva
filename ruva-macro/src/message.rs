@@ -81,20 +81,24 @@ pub(crate) fn extract_externally_notifiable_event_req(ast: &mut DeriveInput) -> 
 				return None;
 			}
 
-			// * Asserting that the given type is TAggregate
-			let quote = quote!(
-				ruva::static_assertions::assert_impl_any!(#tokens: ruva::TAggregate);
-			);
+			let mut quote = quote!();
+			let mut is_valid = true;
 
 			let mut aggregate_name = String::new();
-			tokens.clone().into_iter().for_each(|t| {
-				if let proc_macro2::TokenTree::Ident(ident) = t {
-					aggregate_name.push_str(ident.to_string().as_str());
+			tokens.clone().into_iter().for_each(|t| match t {
+				proc_macro2::TokenTree::Literal(literal) => {
+					let str_val = literal.to_string();
+					aggregate_name.push_str(&str_val[1..str_val.len() - 1]);
 				}
+				proc_macro2::TokenTree::Ident(ident) => {
+					aggregate_name.push_str(ident.to_string().as_str());
+					quote = quote!(ruva::static_assertions::assert_impl_any!(#ident: ruva::TAggregate););
+				}
+				_ => is_valid = false,
 			});
 
-			if aggregate_name.is_empty() {
-				panic!("TAggregate name must be given for externally notifiable event!");
+			if aggregate_name.is_empty() || !is_valid {
+				panic!("TAggregate name or String literalmust be given for externally notifiable event!");
 			}
 
 			// ! Event Metadata is required only when it is externally notifiable
