@@ -8,37 +8,66 @@ use std::sync::OnceLock;
 
 const SERVICE_OUTBOX_STATE_COLUMN: &str = "state";
 const SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN: &str = "event_payload";
-static SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE: OnceLock<&'static str> = OnceLock::new();
+const SERVICE_OUTBOX_TEXT_CAST: &str = "text";
+const SERVICE_OUTBOX_JSON_CAST: &str = "json";
+const SERVICE_OUTBOX_JSONB_CAST: &str = "jsonb";
 
-fn choose_service_outbox_payload_column(columns: &[String]) -> Option<&'static str> {
-	if columns.iter().any(|column| column == SERVICE_OUTBOX_STATE_COLUMN) {
-		Some(SERVICE_OUTBOX_STATE_COLUMN)
-	} else if columns.iter().any(|column| column == SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN) {
-		Some(SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ServiceOutboxPayloadColumn {
+	name: &'static str,
+	cast_type: &'static str,
+}
+
+static SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE: OnceLock<ServiceOutboxPayloadColumn> = OnceLock::new();
+
+fn service_outbox_payload_cast_type(data_type: &str) -> &'static str {
+	match data_type {
+		SERVICE_OUTBOX_JSON_CAST => SERVICE_OUTBOX_JSON_CAST,
+		SERVICE_OUTBOX_JSONB_CAST => SERVICE_OUTBOX_JSONB_CAST,
+		_ => SERVICE_OUTBOX_TEXT_CAST,
+	}
+}
+
+fn choose_service_outbox_payload_column(columns: &[(String, String)]) -> Option<ServiceOutboxPayloadColumn> {
+	if columns.iter().any(|(column, _)| column == SERVICE_OUTBOX_STATE_COLUMN) {
+		Some(ServiceOutboxPayloadColumn {
+			name: SERVICE_OUTBOX_STATE_COLUMN,
+			cast_type: SERVICE_OUTBOX_TEXT_CAST,
+		})
+	} else if let Some((_, data_type)) = columns.iter().find(|(column, _)| column == SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN) {
+		Some(ServiceOutboxPayloadColumn {
+			name: SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN,
+			cast_type: service_outbox_payload_cast_type(data_type),
+		})
 	} else {
 		None
 	}
 }
 
-fn service_outbox_insert_query(payload_column: &str) -> String {
+fn service_outbox_insert_query(payload_column: ServiceOutboxPayloadColumn) -> String {
+	let payload_column_name = payload_column.name;
+	let payload_cast_type = payload_column.cast_type;
+
 	format!(
 		r#"
             INSERT INTO service_outbox
-                (id, aggregate_id, topic, {payload_column}, aggregate_name, trace_id)
-            SELECT * FROM UNNEST
+                (id, aggregate_id, topic, {payload_column_name}, aggregate_name, trace_id)
+            SELECT id, aggregate_id, topic, payload::{payload_cast_type}, aggregate_name, trace_id
+            FROM UNNEST
                 ($1::BIGINT[], $2::text[],  $3::text[], $4::text[], $5::text[], $6::text[])
+                AS outbox(id, aggregate_id, topic, payload, aggregate_name, trace_id)
             "#
 	)
 }
 
-async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<&'static str, BaseError> {
+async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<ServiceOutboxPayloadColumn, BaseError> {
 	if let Some(column) = SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.get().copied() {
 		return Ok(column);
 	}
 
-	let columns = sqlx::query_scalar::<_, String>(
+	let columns = sqlx::query_as::<_, (String, String)>(
 		r#"
-            SELECT attname
+            SELECT attname, atttypid::regtype::text AS data_type
             FROM pg_attribute
             WHERE attrelid = to_regclass('service_outbox')
               AND attname IN ('state', 'event_payload')
@@ -112,30 +141,67 @@ mod tests {
 
 	#[test]
 	fn chooses_state_when_state_column_exists() {
-		let columns = vec!["state".to_string(), "event_payload".to_string()];
+		let columns = vec![("state".to_string(), "text".to_string()), ("event_payload".to_string(), "jsonb".to_string())];
 
-		assert_eq!(choose_service_outbox_payload_column(&columns), Some("state"));
+		assert_eq!(choose_service_outbox_payload_column(&columns), Some(ServiceOutboxPayloadColumn { name: "state", cast_type: "text" }));
 	}
 
 	#[test]
-	fn chooses_event_payload_when_state_column_is_missing() {
-		let columns = vec!["event_payload".to_string()];
+	fn chooses_text_event_payload_when_state_column_is_missing() {
+		let columns = vec![("event_payload".to_string(), "text".to_string())];
 
-		assert_eq!(choose_service_outbox_payload_column(&columns), Some("event_payload"));
+		assert_eq!(
+			choose_service_outbox_payload_column(&columns),
+			Some(ServiceOutboxPayloadColumn {
+				name: "event_payload",
+				cast_type: "text",
+			})
+		);
+	}
+
+	#[test]
+	fn chooses_json_event_payload_when_state_column_is_missing() {
+		let columns = vec![("event_payload".to_string(), "json".to_string())];
+
+		assert_eq!(
+			choose_service_outbox_payload_column(&columns),
+			Some(ServiceOutboxPayloadColumn {
+				name: "event_payload",
+				cast_type: "json",
+			})
+		);
+	}
+
+	#[test]
+	fn chooses_jsonb_event_payload_when_state_column_is_missing() {
+		let columns = vec![("event_payload".to_string(), "jsonb".to_string())];
+
+		assert_eq!(
+			choose_service_outbox_payload_column(&columns),
+			Some(ServiceOutboxPayloadColumn {
+				name: "event_payload",
+				cast_type: "jsonb",
+			})
+		);
 	}
 
 	#[test]
 	fn rejects_unknown_payload_columns() {
-		let columns = vec!["payload".to_string()];
+		let columns = vec![("payload".to_string(), "jsonb".to_string())];
 
 		assert_eq!(choose_service_outbox_payload_column(&columns), None);
 	}
 
 	#[test]
 	fn insert_query_uses_selected_payload_column() {
-		let query = service_outbox_insert_query("event_payload");
+		let query = service_outbox_insert_query(ServiceOutboxPayloadColumn {
+			name: "event_payload",
+			cast_type: "jsonb",
+		});
 
 		assert!(query.contains("(id, aggregate_id, topic, event_payload, aggregate_name, trace_id)"));
+		assert!(query.contains("payload::jsonb"));
+		assert!(query.contains("$4::text[]"));
 	}
 }
 
