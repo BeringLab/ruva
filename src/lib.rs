@@ -58,8 +58,7 @@
 //! ```
 //! Note that use of `internally_notifiable`(or `externally_notifiable`) and `identifier` are MUST.
 //!
-//! * `internally_notifiable` is marker to let the system know that the event should be handled
-//!    within the application
+//! * `internally_notifiable` is marker to let the system know that the event should be handled within the application
 //! * `externally_notifiable` is to leave `OutBox`.
 //! * `identifier` is to record aggregate id.
 //!
