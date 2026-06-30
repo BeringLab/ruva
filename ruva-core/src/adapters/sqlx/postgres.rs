@@ -5,6 +5,54 @@ use crate::{
 };
 use sqlx::{PgConnection, PgPool};
 
+const SERVICE_OUTBOX_STATE_COLUMN: &str = "state";
+const SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN: &str = "event_payload";
+
+fn choose_service_outbox_payload_column(columns: &[String]) -> Option<&'static str> {
+	if columns.iter().any(|column| column == SERVICE_OUTBOX_STATE_COLUMN) {
+		Some(SERVICE_OUTBOX_STATE_COLUMN)
+	} else if columns.iter().any(|column| column == SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN) {
+		Some(SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN)
+	} else {
+		None
+	}
+}
+
+fn service_outbox_insert_query(payload_column: &str) -> String {
+	format!(
+		r#"
+            INSERT INTO service_outbox
+                (id, aggregate_id, topic, {payload_column}, aggregate_name, trace_id)
+            SELECT * FROM UNNEST
+                ($1::BIGINT[], $2::text[],  $3::text[], $4::text[], $5::text[], $6::text[])
+            "#
+	)
+}
+
+async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<&'static str, BaseError> {
+	let columns = sqlx::query_scalar::<_, String>(
+		r#"
+            SELECT attname
+            FROM pg_attribute
+            WHERE attrelid = to_regclass('service_outbox')
+              AND attname IN ('state', 'event_payload')
+              AND NOT attisdropped
+            "#,
+	)
+	.fetch_all(conn)
+	.await
+	.map_err(|err| {
+		tracing::error!("failed to inspect service_outbox payload column! {}", err);
+		BaseError::DatabaseError(err.to_string())
+	})?;
+
+	choose_service_outbox_payload_column(&columns).ok_or_else(|| {
+		let message = "service_outbox requires either state or event_payload column".to_string();
+		tracing::error!("{}", message);
+		BaseError::DatabaseError(message)
+	})
+}
+
 impl Context {
 	pub fn transaction(&mut self) -> &mut PgConnection {
 		match self.pg_transaction.as_mut() {
@@ -16,6 +64,10 @@ impl Context {
 	pub(crate) async fn save_outbox(&mut self) -> Result<(), BaseError> {
 		let outboxes = self.curr_events.iter().filter(|e| e.externally_notifiable()).map(|o| o.outbox()).collect::<Vec<_>>();
 
+		if outboxes.is_empty() {
+			return Ok(());
+		}
+
 		prepare_bulk_operation!(
 			&outboxes,
 			id: i64,
@@ -25,27 +77,56 @@ impl Context {
 			state: String,
 			trace_id: String
 		);
-		sqlx::query(
-			r#"
-            INSERT INTO service_outbox
-                (id, aggregate_id, topic, state, aggregate_name, trace_id)
-            SELECT * FROM UNNEST
-                ($1::BIGINT[], $2::text[],  $3::text[], $4::text[], $5::text[], $6::text[])
-            "#,
-		)
-		.bind(&id)
-		.bind(&aggregate_id)
-		.bind(&topic)
-		.bind(&state)
-		.bind(&aggregate_name)
-		.bind(&trace_id)
-		.execute(self.transaction())
-		.await
-		.map_err(|err| {
-			tracing::error!("failed to insert outbox! {}", err);
-			BaseError::DatabaseError(err.to_string())
-		})?;
+		let payload_column = service_outbox_payload_column(self.transaction()).await?;
+		let query = service_outbox_insert_query(payload_column);
+
+		sqlx::query(&query)
+			.bind(&id)
+			.bind(&aggregate_id)
+			.bind(&topic)
+			.bind(&state)
+			.bind(&aggregate_name)
+			.bind(&trace_id)
+			.execute(self.transaction())
+			.await
+			.map_err(|err| {
+				tracing::error!("failed to insert outbox! {}", err);
+				BaseError::DatabaseError(err.to_string())
+			})?;
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn chooses_state_when_state_column_exists() {
+		let columns = vec!["state".to_string(), "event_payload".to_string()];
+
+		assert_eq!(choose_service_outbox_payload_column(&columns), Some("state"));
+	}
+
+	#[test]
+	fn chooses_event_payload_when_state_column_is_missing() {
+		let columns = vec!["event_payload".to_string()];
+
+		assert_eq!(choose_service_outbox_payload_column(&columns), Some("event_payload"));
+	}
+
+	#[test]
+	fn rejects_unknown_payload_columns() {
+		let columns = vec!["payload".to_string()];
+
+		assert_eq!(choose_service_outbox_payload_column(&columns), None);
+	}
+
+	#[test]
+	fn insert_query_uses_selected_payload_column() {
+		let query = service_outbox_insert_query("event_payload");
+
+		assert!(query.contains("(id, aggregate_id, topic, event_payload, aggregate_name, trace_id)"));
 	}
 }
 
