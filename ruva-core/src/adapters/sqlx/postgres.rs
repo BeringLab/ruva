@@ -4,7 +4,10 @@ use crate::{
 	prepare_bulk_operation,
 };
 use sqlx::{PgConnection, PgPool};
-use std::sync::OnceLock;
+use std::{
+	collections::HashMap,
+	sync::{Mutex, OnceLock},
+};
 
 const SERVICE_OUTBOX_STATE_COLUMN: &str = "state";
 const SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN: &str = "event_payload";
@@ -18,7 +21,11 @@ struct ServiceOutboxPayloadColumn {
 	cast_type: &'static str,
 }
 
-static SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE: OnceLock<ServiceOutboxPayloadColumn> = OnceLock::new();
+static SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE: OnceLock<Mutex<HashMap<String, ServiceOutboxPayloadColumn>>> = OnceLock::new();
+
+fn service_outbox_payload_column_cache() -> &'static Mutex<HashMap<String, ServiceOutboxPayloadColumn>> {
+	SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 fn service_outbox_payload_cast_type(data_type: &str) -> &'static str {
 	match data_type {
@@ -61,7 +68,31 @@ fn service_outbox_insert_query(payload_column: ServiceOutboxPayloadColumn) -> St
 }
 
 async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<ServiceOutboxPayloadColumn, BaseError> {
-	if let Some(column) = SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.get().copied() {
+	let cache_key = sqlx::query_scalar::<_, String>(
+		r#"
+            SELECT concat_ws(
+                ':',
+                COALESCE(inet_server_addr()::text, 'local'),
+                COALESCE(inet_server_port()::text, 'local'),
+                current_database(),
+                COALESCE(to_regclass('service_outbox')::oid::text, 'missing'),
+                array_to_string(current_schemas(true), ',')
+            ) AS cache_key
+            "#,
+	)
+	.fetch_one(&mut *conn)
+	.await
+	.map_err(|err| {
+		tracing::error!("failed to resolve service_outbox payload column cache key! {}", err);
+		BaseError::DatabaseError(err.to_string())
+	})?;
+
+	if let Some(column) = service_outbox_payload_column_cache()
+		.lock()
+		.expect("service_outbox payload column cache poisoned")
+		.get(&cache_key)
+		.copied()
+	{
 		return Ok(column);
 	}
 
@@ -87,8 +118,11 @@ async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<Servic
 		BaseError::DatabaseError(message)
 	})?;
 
-	let _ = SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.set(column);
-	Ok(SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.get().copied().unwrap_or(column))
+	service_outbox_payload_column_cache()
+		.lock()
+		.expect("service_outbox payload column cache poisoned")
+		.insert(cache_key, column);
+	Ok(column)
 }
 
 impl Context {
