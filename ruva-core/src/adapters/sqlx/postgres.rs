@@ -4,9 +4,11 @@ use crate::{
 	prepare_bulk_operation,
 };
 use sqlx::{PgConnection, PgPool};
+use std::sync::OnceLock;
 
 const SERVICE_OUTBOX_STATE_COLUMN: &str = "state";
 const SERVICE_OUTBOX_EVENT_PAYLOAD_COLUMN: &str = "event_payload";
+static SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE: OnceLock<&'static str> = OnceLock::new();
 
 fn choose_service_outbox_payload_column(columns: &[String]) -> Option<&'static str> {
 	if columns.iter().any(|column| column == SERVICE_OUTBOX_STATE_COLUMN) {
@@ -30,6 +32,10 @@ fn service_outbox_insert_query(payload_column: &str) -> String {
 }
 
 async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<&'static str, BaseError> {
+	if let Some(column) = SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.get().copied() {
+		return Ok(column);
+	}
+
 	let columns = sqlx::query_scalar::<_, String>(
 		r#"
             SELECT attname
@@ -46,11 +52,14 @@ async fn service_outbox_payload_column(conn: &mut PgConnection) -> Result<&'stat
 		BaseError::DatabaseError(err.to_string())
 	})?;
 
-	choose_service_outbox_payload_column(&columns).ok_or_else(|| {
+	let column = choose_service_outbox_payload_column(&columns).ok_or_else(|| {
 		let message = "service_outbox requires either state or event_payload column".to_string();
 		tracing::error!("{}", message);
 		BaseError::DatabaseError(message)
-	})
+	})?;
+
+	let _ = SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.set(column);
+	Ok(SERVICE_OUTBOX_PAYLOAD_COLUMN_CACHE.get().copied().unwrap_or(column))
 }
 
 impl Context {
